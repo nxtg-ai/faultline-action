@@ -1,0 +1,94 @@
+name: 'Faultline AI Trust & Safety Scanner'
+description: 'Forensic AI output verification — detects hallucination, manipulation, and policy violations in generated content'
+author: 'NXTG.ai'
+
+branding:
+  icon: 'shield'
+  color: 'red'
+
+inputs:
+  input:
+    description: 'File to scan (path relative to repo root, e.g. "docs/ai-output.md")'
+    required: false
+    default: 'README.md'
+  fail-on:
+    description: 'Minimum severity to fail the build: critical, high, medium, low'
+    required: false
+    default: 'high'
+  provider:
+    description: 'AI provider: gemini, openai, claude, perplexity, mock. Defaults to auto-detect from env vars.'
+    required: false
+    default: ''
+  output-path:
+    description: 'Path to write SARIF output'
+    required: false
+    default: 'faultline.sarif'
+
+outputs:
+  sarif-file:
+    description: 'Path to generated SARIF file'
+    value: ${{ steps.scan.outputs.sarif-file }}
+  verdict-count:
+    description: 'Total number of verdicts returned'
+    value: ${{ steps.scan.outputs.verdict-count }}
+  highest-severity:
+    description: 'Highest severity found: high, medium, low, none'
+    value: ${{ steps.scan.outputs.highest-severity }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Install Faultline CLI
+      shell: bash
+      run: npm install -g @nxtg/faultline@latest
+
+    - name: Run Faultline scan
+      id: scan
+      shell: bash
+      run: |
+        PROVIDER_ARG=""
+        if [ -n "${{ inputs.provider }}" ]; then
+          PROVIDER_ARG="--provider ${{ inputs.provider }}"
+        fi
+
+        set +e
+        faultline scan \
+          --input "${{ inputs.input }}" \
+          $PROVIDER_ARG \
+          --output-format sarif \
+          --fail-on "${{ inputs.fail-on }}" \
+          > "${{ inputs.output-path }}"
+        SCAN_EXIT=$?
+        set -e
+
+        echo "sarif-file=${{ inputs.output-path }}" >> "$GITHUB_OUTPUT"
+
+        VERDICT_COUNT=$(node -e "
+          try {
+            const s = require('./${{ inputs.output-path }}');
+            console.log((s.runs && s.runs[0] && s.runs[0].results) ? s.runs[0].results.length : 0);
+          } catch(e) { console.log(0); }
+        " 2>/dev/null || echo "0")
+        echo "verdict-count=$VERDICT_COUNT" >> "$GITHUB_OUTPUT"
+
+        HIGHEST=$(node -e "
+          try {
+            const s = require('./${{ inputs.output-path }}');
+            const results = (s.runs && s.runs[0] && s.runs[0].results) || [];
+            const levels = results.map(r => r.level || 'note');
+            if (levels.includes('error')) { console.log('high'); }
+            else if (levels.includes('warning')) { console.log('medium'); }
+            else if (levels.includes('note')) { console.log('low'); }
+            else { console.log('none'); }
+          } catch(e) { console.log('none'); }
+        " 2>/dev/null || echo "none")
+        echo "highest-severity=$HIGHEST" >> "$GITHUB_OUTPUT"
+
+        exit $SCAN_EXIT
+
+    - name: Upload SARIF to GitHub Code Scanning
+      uses: github/codeql-action/upload-sarif@v3
+      if: always()
+      with:
+        sarif_file: ${{ inputs.output-path }}
+        category: faultline
