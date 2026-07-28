@@ -1,0 +1,4 @@
+.faultline/
+faultline*.sarif
+faultline-guard.json
+faultline-guard-input.txt
