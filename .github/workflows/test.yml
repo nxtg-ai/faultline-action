@@ -1,5 +1,21 @@
 name: Test Action
 
+# What this workflow proves, and what it does not.
+#
+# The rules engine (PII, toxicity, bias, shell-injection) is deterministic and
+# needs no provider key. The verification engine needs a real provider — and the
+# `mock` provider ALWAYS returns "supported" (providers/mock_provider.ts), so a
+# mock run can never go red. A red/green pair built on mock would be theatre.
+#
+# So the pair below is split, and each job says which half it covers:
+#
+#   red-fixture / green-fixture  — rules engine, no secrets, runs on every PR.
+#                                  Proves the action FAILS on bad content and
+#                                  PASSES on clean content.
+#   live-verification-smoke      — verification engine, needs GEMINI_API_KEY.
+#                                  Warns loudly (rather than passing quietly)
+#                                  when the secret is absent.
+
 on:
   push:
   pull_request:
@@ -10,14 +26,244 @@ permissions:
   actions: read
 
 jobs:
-  test:
+  # --------------------------------------------------------------------------
+  # RED — a seeded-bad fixture must FAIL the build.
+  # --------------------------------------------------------------------------
+  red-fixture:
+    name: 'RED — seeded-bad fixture must fail'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Faultline AI Trust & Safety Scan (mock mode)
+      - name: Scan the seeded-bad fixture (expected to fail)
+        id: bad
+        continue-on-error: true
         uses: ./
         with:
-          input: 'README.md'
+          input: 'fixtures/seeded-bad.md'
+          fail-on: 'high'
+          provider: 'mock'
+          output-path: 'faultline-bad.sarif'
+          upload-sarif: 'false'
+
+      - name: Assert the scan failed
+        shell: bash
+        env:
+          OUTCOME: ${{ steps.bad.outcome }}
+          SEVERITY: ${{ steps.bad.outputs.highest-severity }}
+          COUNT: ${{ steps.bad.outputs.verdict-count }}
+        run: |
+          set -euo pipefail
+          echo "outcome=$OUTCOME highest-severity=$SEVERITY verdict-count=$COUNT"
+
+          if [ "$OUTCOME" != "failure" ]; then
+            echo "::error::RED fixture did not fail the build. The gate is not gating — a" \
+                 "scanner that cannot fail is worse than no scanner, because it reports" \
+                 "all-clear on content it never rejected."
+            exit 1
+          fi
+
+          if [ "$SEVERITY" != "high" ]; then
+            echo "::error::Expected highest-severity=high from the seeded fixture, got '$SEVERITY'."
+            exit 1
+          fi
+
+          echo "RED confirmed: seeded-bad content failed the gate at severity '$SEVERITY'."
+
+  # --------------------------------------------------------------------------
+  # GREEN — a clean fixture must PASS.
+  # --------------------------------------------------------------------------
+  green-fixture:
+    name: 'GREEN — clean fixture must pass'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Scan the clean fixture (expected to pass)
+        id: clean
+        uses: ./
+        with:
+          input: 'fixtures/clean.md'
+          fail-on: 'high'
+          provider: 'mock'
+          output-path: 'faultline-clean.sarif'
+          upload-sarif: 'false'
+
+      - name: Assert the scan passed cleanly
+        shell: bash
+        env:
+          SEVERITY: ${{ steps.clean.outputs.highest-severity }}
+        run: |
+          set -euo pipefail
+          echo "highest-severity=$SEVERITY"
+
+          # A green that is green because nothing ran is not a green. The clean
+          # fixture must come back with no high-severity findings AND with a
+          # report, not with an empty file from a crashed scan.
+          if [ "$SEVERITY" = "high" ]; then
+            echo "::error::Clean fixture reported a high-severity finding. Either the" \
+                 "fixture is not clean or the rules produce false positives."
+            exit 1
+          fi
+
+          if [ ! -f faultline-clean.sarif ]; then
+            echo "::error::No SARIF produced — the scan did not actually run."
+            exit 1
+          fi
+
+          echo "GREEN confirmed: clean content passed and produced a SARIF report."
+
+  # --------------------------------------------------------------------------
+  # SARIF — the report must be well-formed, and not empty for bad content.
+  # --------------------------------------------------------------------------
+  sarif-upload:
+    name: 'SARIF — valid report, uploaded to code scanning'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Scan for SARIF
+        id: sarif
+        continue-on-error: true
+        uses: ./
+        with:
+          input: 'fixtures/seeded-bad.md'
           fail-on: 'critical'
           provider: 'mock'
+          output-path: 'faultline.sarif'
+
+      - name: Validate SARIF structure
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f faultline.sarif || { echo "::error::No SARIF file produced."; exit 1; }
+
+          node -e "
+            const j = JSON.parse(require('fs').readFileSync('faultline.sarif', 'utf8'));
+            const errs = [];
+            if (!j.version) errs.push('missing version');
+            if (!Array.isArray(j.runs) || j.runs.length === 0) errs.push('missing runs[]');
+            const results = j.runs && j.runs[0] && j.runs[0].results;
+            if (!Array.isArray(results)) errs.push('missing runs[0].results[]');
+            else if (results.length === 0) errs.push('seeded-bad fixture produced ZERO results — the SARIF is well-formed but empty, which uploads a clean bill of health for bad content');
+            if (errs.length) { console.error('SARIF invalid: ' + errs.join('; ')); process.exit(1); }
+            console.log('SARIF valid — version ' + j.version + ', ' + results.length + ' result(s).');
+          "
+
+  # --------------------------------------------------------------------------
+  # GUARD — the PR-body path, on text rather than a file.
+  # --------------------------------------------------------------------------
+  guard-mode:
+    name: 'GUARD — text mode, advisory by default, input treated as data'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Guard a block of text (advisory — no guard-fail-on)
+        id: guard
+        uses: ./
+        with:
+          mode: 'guard'
+          provider: 'mock'
+          text: |
+            This release removes the legacy export path.
+            Migration is described in docs/migration.md.
+
+      - name: Assert advisory mode reported without failing
+        shell: bash
+        env:
+          PASSED: ${{ steps.guard.outputs.guard-passed }}
+          JSON: ${{ steps.guard.outputs.guard-json }}
+        run: |
+          set -euo pipefail
+          echo "guard-passed=$PASSED json=$JSON"
+          test "$PASSED" = "true" || { echo "::error::Advisory guard must never fail."; exit 1; }
+          test -f "$JSON" || { echo "::error::No JSON verdict report written."; exit 1; }
+          node -e "
+            const j = JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8'));
+            if (typeof j.gate_passed !== 'boolean') { console.error('malformed guard JSON'); process.exit(1); }
+            if (j.fail_on !== null) { console.error('advisory run should report fail_on: null'); process.exit(1); }
+            console.log('guard JSON valid — ' + j.claims_total + ' claim(s), gate_passed=' + j.gate_passed);
+          " "$JSON"
+
+      - name: Clear injection canaries
+        shell: bash
+        run: rm -f /tmp/faultline-canary-a /tmp/faultline-canary-b
+
+      - name: Guard an injection-shaped body
+        # A PR body is written by whoever opened the PR. If the action
+        # interpolated it into a run block, these would execute.
+        uses: ./
+        with:
+          mode: 'guard'
+          provider: 'mock'
+          text: 'Notes $(touch /tmp/faultline-canary-a) and `touch /tmp/faultline-canary-b` done.'
+
+      - name: Assert no command executed from the text
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -e /tmp/faultline-canary-a ] || [ -e /tmp/faultline-canary-b ]; then
+            echo "::error::COMMAND INJECTION — text passed to guard was executed as shell."
+            exit 1
+          fi
+          echo "No injection: the text was treated as data."
+
+  # --------------------------------------------------------------------------
+  # LIVE — the verification half. Needs a real provider key.
+  # --------------------------------------------------------------------------
+  live-verification-smoke:
+    name: 'LIVE — real verification (needs GEMINI_API_KEY secret)'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Report whether this job can prove anything
+        id: precheck
+        shell: bash
+        env:
+          HAS_KEY: ${{ secrets.GEMINI_API_KEY != '' }}
+        run: |
+          set -euo pipefail
+          echo "has-key=$HAS_KEY" >> "$GITHUB_OUTPUT"
+          if [ "$HAS_KEY" != "true" ]; then
+            echo "::warning::GEMINI_API_KEY is not set, so real verification was NOT exercised." \
+                 "The red/green jobs cover the rules engine only. Add the secret to prove the" \
+                 "action catches a false factual claim."
+          fi
+
+      - name: Guard a seeded false claim (must be refuted)
+        if: steps.precheck.outputs.has-key == 'true'
+        id: live
+        continue-on-error: true
+        uses: ./
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        with:
+          mode: 'guard'
+          provider: 'gemini'
+          guard-fail-on: 'refuted'
+          text: 'The Great Wall of China is visible from the Moon with the naked eye.'
+
+      - name: Assert the false claim was caught
+        if: steps.precheck.outputs.has-key == 'true'
+        shell: bash
+        env:
+          OUTCOME: ${{ steps.live.outcome }}
+          JSON: ${{ steps.live.outputs.guard-json }}
+        run: |
+          set -euo pipefail
+          if [ "$OUTCOME" != "failure" ]; then
+            echo "::error::A known-false claim did not trip --fail-on refuted."
+            exit 1
+          fi
+          node -e "
+            const j = JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8'));
+            if (j.degraded) {
+              console.error('Scan was DEGRADED — claims went unchecked, so this run proves nothing about detection.');
+              process.exit(1);
+            }
+            const refuted = j.claims.filter(function (c) { return c.verdict === 'REFUTED'; });
+            if (refuted.length === 0) { console.error('No REFUTED verdict returned.'); process.exit(1); }
+            console.log('LIVE confirmed: ' + refuted.length + ' claim(s) refuted against real sources.');
+          " "$JSON"

@@ -7,88 +7,204 @@ branding:
   color: 'red'
 
 inputs:
+  mode:
+    description: 'scan (a file in the repo) or guard (a block of text, e.g. a PR body)'
+    required: false
+    default: 'scan'
   input:
-    description: 'File to scan (path relative to repo root, e.g. "docs/ai-output.md")'
+    description: 'scan mode — file to scan (path relative to repo root, e.g. "docs/ai-output.md")'
     required: false
     default: 'README.md'
+  text:
+    description: 'guard mode — text to check. Treated as untrusted data, never as shell input.'
+    required: false
+    default: ''
   fail-on:
-    description: 'Minimum severity to fail the build: critical, high, medium, low'
+    description: 'scan mode — minimum severity to fail the build: critical, high, medium, low'
     required: false
     default: 'high'
+  guard-fail-on:
+    description: 'guard mode — refuted or unsupported. Empty means advisory: report, never fail.'
+    required: false
+    default: ''
   provider:
     description: 'AI provider: gemini, openai, claude, perplexity, mock. Defaults to auto-detect from env vars.'
     required: false
     default: ''
+  version:
+    description: 'Version of @nxtg/faultline to install. Pin for reproducible runs.'
+    required: false
+    default: 'latest'
   output-path:
-    description: 'Path to write SARIF output'
+    description: 'scan mode — path to write SARIF output'
     required: false
     default: 'faultline.sarif'
+  upload-sarif:
+    description: 'Upload SARIF to GitHub code scanning. Needs security-events: write.'
+    required: false
+    default: 'true'
 
 outputs:
   sarif-file:
-    description: 'Path to generated SARIF file'
+    description: 'scan mode — path to the generated SARIF file'
     value: ${{ steps.scan.outputs.sarif-file }}
   verdict-count:
-    description: 'Total number of verdicts returned'
+    description: 'scan mode — number of results in the SARIF report'
     value: ${{ steps.scan.outputs.verdict-count }}
   highest-severity:
-    description: 'Highest severity found: high, medium, low, none'
+    description: 'scan mode — highest severity found: high, medium, low, none'
     value: ${{ steps.scan.outputs.highest-severity }}
+  guard-passed:
+    description: 'guard mode — "true" when the gate passed'
+    value: ${{ steps.guard.outputs.guard-passed }}
+  guard-json:
+    description: 'guard mode — path to the JSON verdict report'
+    value: ${{ steps.guard.outputs.guard-json }}
 
 runs:
   using: 'composite'
   steps:
+    # Every input reaches bash through env and is quoted at the point of use.
+    # Interpolating ${{ }} directly into a run block makes any value containing
+    # $(...) or backticks execute as shell — and in guard mode that value is a
+    # PR body written by whoever opened the pull request.
     - name: Install Faultline CLI
       shell: bash
-      run: npm install -g @nxtg/faultline@latest
+      env:
+        FL_VERSION: ${{ inputs.version }}
+        FL_MODE: ${{ inputs.mode }}
+      run: |
+        set -uo pipefail
+        npm install -g "@nxtg/faultline@${FL_VERSION}"
 
+        # Prove the install can actually execute before running a scan against
+        # it. @nxtg/faultline@0.9.1 published without two directories its own
+        # code imports, so every command — including `version` — died with
+        # ERR_MODULE_NOT_FOUND. Catching that here produces one clear message
+        # instead of a module-resolution stack trace attributed to your content.
+        if ! INSTALLED=$(faultline version 2>&1); then
+          echo "::error::The installed @nxtg/faultline is not runnable. \`faultline version\` failed:"
+          printf '%s\n' "$INSTALLED" >&2
+          echo "::error::Pin a known-good release with the 'version' input, e.g. version: '0.9.2'."
+          exit 1
+        fi
+        echo "Installed: $INSTALLED"
+
+        if [ "$FL_MODE" = "guard" ] && ! faultline --help 2>&1 | grep -q 'faultline guard'; then
+          echo "::error::This @nxtg/faultline build has no 'guard' subcommand ($INSTALLED)." \
+               "guard mode needs >= 0.9.2. Set the 'version' input, or use mode: scan."
+          exit 1
+        fi
+
+    # ----------------------------------------------------------------------
+    # scan mode — verify a file in the repository
+    # ----------------------------------------------------------------------
     - name: Run Faultline scan
       id: scan
+      if: inputs.mode == 'scan'
       shell: bash
+      env:
+        FL_INPUT: ${{ inputs.input }}
+        FL_PROVIDER: ${{ inputs.provider }}
+        FL_FAIL_ON: ${{ inputs.fail-on }}
+        FL_OUT: ${{ inputs.output-path }}
       run: |
-        PROVIDER_ARG=""
-        if [ -n "${{ inputs.provider }}" ]; then
-          PROVIDER_ARG="--provider ${{ inputs.provider }}"
+        set -uo pipefail
+
+        PROVIDER_ARGS=()
+        if [ -n "$FL_PROVIDER" ]; then
+          PROVIDER_ARGS+=(--provider "$FL_PROVIDER")
         fi
 
         set +e
         faultline scan \
-          --input "${{ inputs.input }}" \
-          $PROVIDER_ARG \
+          --input "$FL_INPUT" \
+          ${PROVIDER_ARGS[@]+"${PROVIDER_ARGS[@]}"} \
           --output-format sarif \
-          --fail-on "${{ inputs.fail-on }}" \
-          > "${{ inputs.output-path }}"
+          --fail-on "$FL_FAIL_ON" \
+          > "$FL_OUT"
         SCAN_EXIT=$?
         set -e
 
-        echo "sarif-file=${{ inputs.output-path }}" >> "$GITHUB_OUTPUT"
+        echo "sarif-file=$FL_OUT" >> "$GITHUB_OUTPUT"
 
         VERDICT_COUNT=$(node -e "
           try {
-            const s = require('./${{ inputs.output-path }}');
-            console.log((s.runs && s.runs[0] && s.runs[0].results) ? s.runs[0].results.length : 0);
-          } catch(e) { console.log(0); }
+            const j = JSON.parse(require('fs').readFileSync(process.env.FL_OUT, 'utf8'));
+            console.log((j.runs && j.runs[0] && j.runs[0].results) ? j.runs[0].results.length : 0);
+          } catch (e) { console.log(0); }
         " 2>/dev/null || echo "0")
         echo "verdict-count=$VERDICT_COUNT" >> "$GITHUB_OUTPUT"
 
         HIGHEST=$(node -e "
           try {
-            const s = require('./${{ inputs.output-path }}');
-            const results = (s.runs && s.runs[0] && s.runs[0].results) || [];
+            const j = JSON.parse(require('fs').readFileSync(process.env.FL_OUT, 'utf8'));
+            const results = (j.runs && j.runs[0] && j.runs[0].results) || [];
             const levels = results.map(r => r.level || 'note');
             if (levels.includes('error')) { console.log('high'); }
             else if (levels.includes('warning')) { console.log('medium'); }
             else if (levels.includes('note')) { console.log('low'); }
             else { console.log('none'); }
-          } catch(e) { console.log('none'); }
+          } catch (e) { console.log('none'); }
         " 2>/dev/null || echo "none")
         echo "highest-severity=$HIGHEST" >> "$GITHUB_OUTPUT"
 
         exit $SCAN_EXIT
 
+    # ----------------------------------------------------------------------
+    # guard mode — verify a block of text (PR body, release notes, agent output)
+    # ----------------------------------------------------------------------
+    - name: Run Faultline guard
+      id: guard
+      if: inputs.mode == 'guard'
+      shell: bash
+      env:
+        FL_TEXT: ${{ inputs.text }}
+        FL_PROVIDER: ${{ inputs.provider }}
+        FL_GUARD_FAIL_ON: ${{ inputs.guard-fail-on }}
+      run: |
+        set -uo pipefail
+
+        # printf %s, never echo — the text is untrusted and may start with a dash
+        # or contain escapes that echo would interpret.
+        printf '%s' "$FL_TEXT" > faultline-guard-input.txt
+
+        if [ ! -s faultline-guard-input.txt ] || ! grep -q '[^[:space:]]' faultline-guard-input.txt; then
+          echo "faultline: guard received empty text — nothing to check." >&2
+          echo "guard-passed=true" >> "$GITHUB_OUTPUT"
+          echo "guard-json=" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+
+        ARGS=()
+        if [ -n "$FL_PROVIDER" ]; then
+          ARGS+=(--provider "$FL_PROVIDER")
+        fi
+        if [ -n "$FL_GUARD_FAIL_ON" ]; then
+          ARGS+=(--fail-on "$FL_GUARD_FAIL_ON")
+        fi
+
+        # JSON first (the machine-readable artefact), then the readable table for
+        # the log. The exit code of record is the table run: identical inputs, and
+        # running it last means $? is the gate verdict.
+        set +e
+        faultline guard ${ARGS[@]+"${ARGS[@]}"} --json < faultline-guard-input.txt > faultline-guard.json
+        faultline guard ${ARGS[@]+"${ARGS[@]}"} < faultline-guard-input.txt
+        GUARD_EXIT=$?
+        set -e
+
+        echo "guard-json=faultline-guard.json" >> "$GITHUB_OUTPUT"
+        if [ "$GUARD_EXIT" -eq 0 ]; then
+          echo "guard-passed=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "guard-passed=false" >> "$GITHUB_OUTPUT"
+        fi
+
+        exit $GUARD_EXIT
+
     - name: Upload SARIF to GitHub Code Scanning
       uses: github/codeql-action/upload-sarif@v3
-      if: always()
+      if: always() && inputs.mode == 'scan' && inputs.upload-sarif == 'true'
       with:
         sarif_file: ${{ inputs.output-path }}
         category: faultline
