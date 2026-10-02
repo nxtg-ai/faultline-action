@@ -1,7 +1,10 @@
 # Faultline AI Trust & Safety Scanner
 
+[![Release stage: alpha](https://img.shields.io/badge/stage-alpha-orange.svg)](https://github.com/nxtg-ai/faultline-pro/blob/main/CHANGELOG.md)
 [![GitHub Marketplace](https://img.shields.io/badge/Marketplace-Faultline-blue?logo=github)](https://github.com/marketplace/actions/faultline-ai-trust-safety-scanner)
 [![License](https://img.shields.io/badge/License-Apache_2.0-green.svg)](LICENSE)
+
+> **Release stage: alpha.** Usable today, with sharp edges. Verdict accuracy has not yet been measured on a labelled test set, and the Faultline engine may change before 1.0. This action stays on `v1`: its inputs and outputs are stable.
 
 Forensic AI output verification for your CI pipeline. Detects hallucination, manipulation, and policy violations in AI-generated content — before it ships.
 
