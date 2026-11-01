@@ -6,7 +6,7 @@
 
 > **Release stage: alpha.** Usable today, with sharp edges. Verdict accuracy has not yet been measured on a labelled test set, and the Faultline engine may change before 1.0. This action stays on `v1`: its inputs and outputs are stable.
 
-Forensic AI output verification for your CI pipeline. Detects hallucination, manipulation, and policy violations in AI-generated content — before it ships.
+Forensic AI output verification for your CI pipeline: flags possible hallucination, manipulation and policy issues in AI-generated content for review, before it ships.
 
 Results appear as **inline PR annotations** and **Security tab alerts** via GitHub Code Scanning.
 
@@ -117,7 +117,7 @@ body containing `$(...)` or backticks cannot execute.
 
 ## How Results Appear
 
-After the action runs, violations appear in two places:
+After the action runs, findings appear in two places:
 
 1. **Security → Code scanning alerts**: Every finding with file and line context
 2. **PR → Files changed**: Inline annotations on the exact lines with issues
@@ -125,7 +125,7 @@ After the action runs, violations appear in two places:
 Findings are categorised by the Faultline rule that fired:
 - `faultline/verification/contradicted` — claim contradicted by evidence
 - `faultline/verification/mixed` — claim has mixed supporting evidence
-- `faultline/eu-ai-act/*` — EU AI Act risk tier detections (Article 5, Annex III, Article 50)
+- `faultline/eu-ai-act/*` — flags text patterns for your own review; not a legal assessment
 - Custom rules: `pii`, `bias`, `toxicity`, `manipulation`, and more
 
 ---
@@ -142,9 +142,9 @@ Findings are categorised by the Faultline rule that fired:
     fail-on: 'critical'
 ```
 
-Runs the deterministic rule checks — PII, toxicity, bias, shell injection, EU AI
-Act risk tiers — with no external API call. Zero cost, instant, and enough to
-enforce policy on generated content.
+Runs the deterministic rule checks — PII, toxicity, bias, shell injection, and
+the `faultline/eu-ai-act/*` text patterns — with no external API call. Zero
+cost, instant, and enough to enforce policy on generated content.
 
 **It does not verify any claim.** The `mock` provider returns `supported` for
 every claim it is given. That is fine for rule enforcement and for wiring up CI,
@@ -169,9 +169,9 @@ Set your provider's API key as a repository secret, then pass it as an env var:
 
 The provider is auto-detected from whichever key is present. Use `provider: 'gemini'` to force a specific provider.
 
-**Use Gemini if you want evidence.** It is the only provider that retrieves live
-sources while verifying (via the `googleSearch` tool). The others judge from the
-model's own knowledge and return verdicts with no source URLs attached — useful
+**Use Gemini if you want evidence.** Gemini retrieves live sources while
+verifying (via the `googleSearch` tool). The others judge from the model's own
+knowledge and return verdicts with no source URLs attached — useful
 as a signal, but not evidence you can show anyone.
 
 Get a free Gemini API key at [aistudio.google.com](https://aistudio.google.com/apikey).
