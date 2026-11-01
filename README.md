@@ -6,7 +6,7 @@
 
 > **Release stage: alpha.** Usable today, with sharp edges. Verdict accuracy has not yet been measured on a labelled test set, and the Faultline engine may change before 1.0. This action stays on `v1`: its inputs and outputs are stable.
 
-Forensic AI output verification for your CI pipeline. Detects hallucination, manipulation, and policy findings in AI-generated content — before it ships.
+Forensic AI output verification for your CI pipeline: flags possible hallucination, manipulation and policy issues in AI-generated content for review, before it ships.
 
 Results appear as **inline PR annotations** and **Security tab alerts** via GitHub Code Scanning.
 

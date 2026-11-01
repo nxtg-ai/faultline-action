@@ -1,5 +1,5 @@
 name: 'Faultline AI Trust & Safety Scanner'
-description: 'Alpha. Forensic AI output verification: detects hallucination, manipulation and policy findings in generated content'
+description: 'Alpha. Forensic AI output verification: flags possible hallucination, manipulation and policy issues in generated content for review'
 author: 'NXTG.ai'
 
 branding:
