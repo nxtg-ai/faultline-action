@@ -19,6 +19,12 @@ name: Test Action
 on:
   push:
   pull_request:
+  # The action installs @nxtg/faultline@latest by default, so a CLI release can
+  # break it with no commit here (0.9.1 shipped unrunnable). Run weekly against
+  # whatever latest is, and on demand.
+  schedule:
+    - cron: '17 6 * * 1'
+  workflow_dispatch:
 
 permissions:
   security-events: write
