@@ -203,7 +203,7 @@ runs:
         exit $GUARD_EXIT
 
     - name: Upload SARIF to GitHub Code Scanning
-      uses: github/codeql-action/upload-sarif@v3
+      uses: github/codeql-action/upload-sarif@v4
       if: always() && inputs.mode == 'scan' && inputs.upload-sarif == 'true'
       with:
         sarif_file: ${{ inputs.output-path }}

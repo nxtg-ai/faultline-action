@@ -32,7 +32,7 @@ jobs:
   faultline:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Faultline AI Trust & Safety Scan
         uses: nxtg-ai/faultline-action@v1
@@ -94,7 +94,7 @@ jobs:
   check-pr-body:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: nxtg-ai/faultline-action@v1
         with:
