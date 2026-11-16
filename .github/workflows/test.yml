@@ -39,7 +39,7 @@ jobs:
     name: 'RED — seeded-bad fixture must fail'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Scan the seeded-bad fixture (expected to fail)
         id: bad
@@ -83,7 +83,7 @@ jobs:
     name: 'GREEN — clean fixture must pass'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Scan the clean fixture (expected to pass)
         id: clean
@@ -126,7 +126,7 @@ jobs:
     name: 'SARIF — valid report, uploaded to code scanning'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Scan for SARIF
         id: sarif
@@ -163,7 +163,7 @@ jobs:
     name: 'GUARD — text mode, advisory by default, input treated as data'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Guard a block of text (advisory — no guard-fail-on)
         id: guard
@@ -222,7 +222,7 @@ jobs:
     name: 'LIVE — real verification (needs GEMINI_API_KEY secret)'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Report whether this job can prove anything
         id: precheck
