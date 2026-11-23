@@ -153,7 +153,31 @@ as "the claims check out."
 
 ### Live AI Verification (API key required)
 
-Set your provider's API key as a repository secret, then pass it as an env var:
+There are two ways to run a live check.
+
+**With a Faultline API key (hosted).** Set `FAULTLINE_API_KEY` as a repository
+secret. The check then runs on the hosted Faultline API, which retrieves its own
+evidence, so you need no provider key of your own. Both `scan` and `guard` mode
+use it. Keys and plans: [faultline.nxtg.ai/pricing](https://faultline.nxtg.ai/pricing).
+
+```yaml
+- uses: nxtg-ai/faultline-action@v1
+  with:
+    input: 'docs/ai-output.md'
+    fail-on: 'high'
+  env:
+    FAULTLINE_API_KEY: ${{ secrets.FAULTLINE_API_KEY }}
+```
+
+When `FAULTLINE_API_KEY` is set, the check runs on the hosted API and any
+provider key in the same step is not used. The hosted API applies its own rules
+and confidence threshold; rules from a local Faultline config are not applied.
+If the API refuses the key or cannot be reached, nothing is reported as a
+verdict: in scan mode the step fails with the reason, and in guard mode it says
+no claims were checked and fails only when `guard-fail-on` is set.
+
+**With your own provider key (local).** Set your provider's API key as a
+repository secret, then pass it as an env var. The check runs inside the job:
 
 ```yaml
 - uses: nxtg-ai/faultline-action@v1
