@@ -4,7 +4,7 @@
 [![GitHub Marketplace](https://img.shields.io/badge/Marketplace-Faultline-blue?logo=github)](https://github.com/marketplace/actions/faultline-ai-trust-safety-scanner)
 [![License](https://img.shields.io/badge/License-Apache_2.0-green.svg)](LICENSE)
 
-> **Release stage: alpha.** Usable today, with sharp edges. Verdict accuracy has not yet been measured on a labelled test set, and the Faultline engine may change before 1.0. This action stays on `v1`: its inputs and outputs are stable.
+> **Release stage: alpha.** Usable today, with sharp edges. Measured accuracy, not pre-registered: on 2026-11-06 the hosted engine (judge model `gemini-2.5-flash`) scored 0.755 balanced accuracy [95% CI 0.678, 0.829] on the 193 true-or-false claims in a 200-claim, human-labelled Factcheck-Bench sample. Four runs on that sample that week read 0.755 to 0.802. Supported counts as true and contradicted as false; mixed and unverified count as wrong. The production judge model changed on 2026-11-14 and the hosted engine has not been re-measured since. Method and the full record: the [faultline-pro README](https://github.com/nxtg-ai/faultline-pro#readme). The Faultline engine may change before 1.0. This action stays on `v1`: its inputs and outputs are stable.
 
 Forensic AI output verification for your CI pipeline: flags possible hallucination, manipulation and policy issues in AI-generated content for review, before it ships.
 
